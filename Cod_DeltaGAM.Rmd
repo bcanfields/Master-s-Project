@@ -1,0 +1,944 @@
+---
+title: "Cod_DeltaGAM"
+author: "Bea Smith"
+date: "2/28/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#1. Load Packages
+```{r}
+library(tidyverse)
+library(mgcv)
+library(dplyr)
+library(maps)
+library(mapdata)
+library(sna)
+library(phenology)
+library(ggplot2)
+library(raster)
+```
+
+# 2. Explore data, reclass env variables, create Cod dataset
+```{r}
+total <- read.csv("total.csv")
+```
+
+## 2.1 Reclass some ENV Variables
+
+### 2.1.1 Sediment Size
+Reclass Sediment to integer
+```{r}
+unique(total$SEDIMENT)
+total$SEDSIZE <- ifelse(total$SEDIMENT ==  '0 - 0.03 Silt/Mud', 3, 
+                        ifelse(total$SEDIMENT ==  '0.03 - 0.17 Sand', 4,
+                               ifelse(total$SEDIMENT ==  '0.17 - 0.35 Sand', 1, 
+                                      ifelse(total$SEDIMENT ==  '0.36 - 0.48 Sand', 5,
+                                             ifelse(total$SEDIMENT ==  '0.35 - 0.36 Sand', 6, ifelse(total$SEDIMENT ==  '0.48+ Coarse Sand to Gravel',2,NA))))))
+
+total %>% 
+  dplyr::select(SEDIMENT,SEDSIZE) %>% 
+  sample_n(5)
+```
+
+```{r}
+total$SEDIMENT = NULL
+total <- total %>%
+  dplyr::rename(SEDIMENT = 'SEDSIZE')
+```
+
+### 2.1.2 SBFDEPTH
+Reclass SBF Depth to integer
+```{r}
+unique(total$SBFDEPTH) 
+
+total$SBF_RCLS <- ifelse(total$SBFDEPTH ==  'Shallow Depression', 1, 
+                        ifelse(total$SBFDEPTH==  'High Flat', 2,
+                               ifelse(total$SBFDEPTH ==  'Deeper Flat',3, 
+                                      ifelse(total$SBFDEPTH ==  'Steep', 4,
+                                             ifelse(total$SBFDEPTH ==  'Low Slope', 5,
+                                                    ifelse(total$SBFDEPTH ==  'Somewhat Deep Depression', 6,
+                                                           ifelse(total$SBFDEPTH ==  'Moderate Depression', 7,
+                                                                  ifelse(total$SBFDEPTH ==  'Shallow Flat', 8,
+                                                                         ifelse(total$SBFDEPTH ==  'Somewhat Deep Flat', 9,
+                                                                                ifelse(total$SBFDEPTH ==  'Very Shallow Flat',10,
+                                                                                       ifelse(total$SBFDEPTH ==  'Deepest Depression',11,
+                                                                                              ifelse(total$SBFDEPTH ==  'Deep Depression',12,
+                                                                                                     ifelse(total$SBFDEPTH ==  'Moderate Flat',13,
+                                                                                                            ifelse(total$SBFDEPTH ==  'Deeper Depression',14,
+                                                                                                                   ifelse(total$SBFDEPTH ==  'Side Slope',15,
+                                                                                                                          ifelse(total$SBFDEPTH ==  'Very Shallow Depression',16,
+                                                                                                                                 ifelse(total$SBFDEPTH ==  'Deepest Flat',17,
+                                                                                                                                      ifelse(total$SBFDEPTH ==  'Deep Flat',18,NA))))))))))))))))))
+
+total %>% 
+  dplyr::select(SBFDEPTH,SBF_RCLS) %>% 
+  sample_n(5)
+
+```
+```{r}
+total$SBFDEPTH = NULL
+total <- total %>%
+  dplyr::rename(SBFDEPTH = 'SBF_RCLS')
+```
+
+```{r}
+total %>% 
+  dplyr::select(SBFDEPTH,SEDIMENT) %>% 
+  sample_n(5)
+```
+
+## 2.2 Selecting ENV variables and subsetting Cod
+```{r}
+atlantic_cod <- total %>% 
+  dplyr::select(GADUS.MORHUA, year, date, lat, lon, depth, SEDIMENT, bottemp, surftemp, surfsalin, botsalin, season, SBFDEPTH) #create new DF with specific environmental variables
+```
+
+##2.3 Subsetting by Season
+```{r}
+Spring_Cod <- subset(atlantic_cod, atlantic_cod$season == "SPRING")
+
+Fall_Cod <- subset(atlantic_cod, atlantic_cod$season == "FALL")
+```
+
+##2.4 Splitting into Presence Absence Dataset
+```{r}
+Spring_Cod_pres <- Spring_Cod
+Spring_Cod_pres$GADUS.MORHUA[Spring_Cod_pres$GADUS.MORHUA > 0] <- 1 
+
+Fall_Cod_pres <- Fall_Cod
+Fall_Cod_pres$GADUS.MORHUA[Fall_Cod_pres$GADUS.MORHUA > 0] <- 1 
+
+```
+
+Percent of times caught in total trawls
+```{r}
+Spring_prcnt_caught <- (sum(Spring_Cod_pres$GADUS.MORHUA == 1))/ (nrow(Spring_Cod_pres)) * 100
+
+
+Fall_prcnt_caught <- (sum(Fall_Cod_pres$GADUS.MORHUA == 1))/ (nrow(Fall_Cod_pres)) * 100
+```
+
+##2.5 Caught Fish Datasets 
+```{r}
+Caught_Spring_Cod <- subset(Spring_Cod, Spring_Cod$GADUS.MORHUA > 0)
+  
+Caught_Fall_Cod <- subset(Fall_Cod, Fall_Cod$GADUS.MORHUA > 0)
+```
+
+#3. Modeling - Spring
+##3.1 Pres/Abs 
+```{r}
+#binomial gam submodel. Binomial answers how many successes we get in a fixed number of trials. Random variable x = # of successes
+
+Spring_gam_presabs <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + factor(SEDIMENT) + s(botsalin) + s(surfsalin) + factor(SBFDEPTH), family = binomial(link = "logit"), data=Spring_Cod_pres)
+
+summary(Spring_gam_presabs)
+AIC(Spring_gam_presabs)
+anova(Spring_gam_presabs)
+
+
+gam.check(Spring_gam_presabs) #https://www.rdocumentation.org/packages/mgcv/versions/1.2-2/topics/gam.check
+```
+no bottemp
+```{r}
+Spring_gam_presabs <- gam(GADUS.MORHUA ~ s(surftemp) + factor(SEDIMENT) + s(botsalin) + s(surfsalin) + factor(SBFDEPTH), family = binomial(link = "logit"), data=Spring_Cod_pres)
+
+summary(Spring_gam_presabs)
+AIC(Spring_gam_presabs)
+anova(Spring_gam_presabs)
+
+
+gam.check(Spring_gam_presabs)
+```
+not surf temp
+```{r}
+Spring_gam_presabs <- gam(GADUS.MORHUA ~ s(bottemp) + factor(SEDIMENT) + s(botsalin) + s(surfsalin) + factor(SBFDEPTH), family = binomial(link = "logit"), data=Spring_Cod_pres)
+
+summary(Spring_gam_presabs)
+AIC(Spring_gam_presabs)
+anova(Spring_gam_presabs)
+
+
+gam.check(Spring_gam_presabs)
+```
+no sediment
+```{r}
+Spring_gam_presabs <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + s(botsalin) + s(surfsalin) + factor(SBFDEPTH), family = binomial(link = "logit"), data=Spring_Cod_pres)
+
+summary(Spring_gam_presabs)
+AIC(Spring_gam_presabs)
+anova(Spring_gam_presabs)
+
+
+gam.check(Spring_gam_presabs)
+```
+no botsalin
+```{r}
+Spring_gam_presabs <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + factor(SEDIMENT) + s(surfsalin) + factor(SBFDEPTH), family = binomial(link = "logit"), data=Spring_Cod_pres)
+
+summary(Spring_gam_presabs)
+AIC(Spring_gam_presabs)
+anova(Spring_gam_presabs)
+
+
+gam.check(Spring_gam_presabs)
+```
+no surf salin
+```{r}
+Spring_gam_presabs <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + factor(SEDIMENT) + s(botsalin) + factor(SBFDEPTH), family = binomial(link = "logit"), data=Spring_Cod_pres)
+
+summary(Spring_gam_presabs)
+AIC(Spring_gam_presabs)
+anova(Spring_gam_presabs)
+
+
+gam.check(Spring_gam_presabs)
+```
+no SBF depth
+```{r}
+Spring_gam_presabs <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + factor(SEDIMENT) + s(botsalin) + s(surfsalin), family = binomial(link = "logit"), data=Spring_Cod_pres)
+
+summary(Spring_gam_presabs)
+AIC(Spring_gam_presabs)
+anova(Spring_gam_presabs)
+
+
+gam.check(Spring_gam_presabs)
+```
+
+##3.2 Positive CPUE
+###3.2.1. Tweedie
+```{r}
+#p  - the variance of an observation is proportional to its mean to the power p. p must be greater than 1 and less than or equal to 2. 1 would be Poisson, 2 is gamma.
+#link - The link function: one of "log", "identity", "inverse", "sqrt", or a power link (Tweedie only). GAM tweedie functions https://stat.ethz.ch/R-manual/R-patched/library/mgcv/html/Tweedie.html
+
+#fit a poisson glm with identity link
+Spring_pres.tweedie <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + SEDIMENT + s(botsalin) + s(surfsalin) + SBFDEPTH, family = tw(link = "log"), data=Caught_Spring_Cod)
+
+#link = power(0)
+
+summary(Spring_pres.tweedie)
+AIC(Spring_pres.tweedie)
+anova(Spring_pres.tweedie)
+
+gam.check(Spring_pres.tweedie)
+```
+
+###3.2.2 Gamma
+```{r}
+Spring_pres.gamma <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + SEDIMENT + s(botsalin) + s(surfsalin) + SBFDEPTH, family = Gamma(link = "inverse"), data=Caught_Spring_Cod)
+
+summary(Spring_pres.gamma)
+AIC(Spring_pres.gamma)
+anova(Spring_pres.gamma)
+
+gam.check(Spring_pres.gamma)
+```
+
+###3.2.3 Gaussian Log
+```{r}
+Spring_pres.gamlog <- gam(log(GADUS.MORHUA) ~ s(bottemp) + s(surftemp) + SEDIMENT + s(botsalin) + s(surfsalin) + SBFDEPTH, data=Caught_Spring_Cod)
+
+summary(Spring_pres.gamlog)
+AIC(Spring_pres.gamlog)
+anova(Spring_pres.gamlog)
+
+
+gam.check(Spring_pres.gamlog)
+```
+
+###3.2.4 Gaussian Fourth Root 
+```{r}
+Spring_pres.gam4log <- gam((GADUS.MORHUA)^0.25 ~ s(bottemp) + s(surftemp) + SEDIMENT + s(botsalin) + s(surfsalin) + SBFDEPTH, data=Caught_Spring_Cod)
+
+summary(Spring_pres.gam4log)
+AIC(Spring_pres.gam4log)
+anova(Spring_pres.gam4log)
+
+
+gam.check(Spring_pres.gam4log)
+      
+```
+
+##3.3 Total Biomass 
+###3.3.1 Log Gaussian
+```{r}
+Spring_total.gamlog <- gam(log(GADUS.MORHUA +1) ~ s(bottemp) + s(surftemp) + SEDIMENT + s(botsalin) + s(surfsalin) + SBFDEPTH, data=Spring_Cod)
+
+summary(Spring_total.gamlog)
+AIC(Spring_total.gamlog)
+anova(Spring_total.gamlog)
+
+
+gam.check(Spring_total.gamlog)
+```
+
+###3.3.2 Log Tweedie
+```{r}
+#p  - the variance of an observation is proportional to its mean to the power p. p must be greater than 1 and less than or equal to 2. 1 would be Poisson, 2 is gamma.
+#link - The link function: one of "log", "identity", "inverse", "sqrt", or a power link (Tweedie only). GAM tweedie functions https://stat.ethz.ch/R-manual/R-patched/library/mgcv/html/Tweedie.html
+
+#fit a poisson glm with identity link
+Spring_total.tweedie_log <- gam(log(GADUS.MORHUA +1) ~ s(bottemp) + s(surftemp) + SEDIMENT + s(botsalin) + s(surfsalin) + SBFDEPTH, family = tw, data=Spring_Cod)
+
+#link = power(0)
+
+summary(Spring_total.tweedie_log)
+AIC(Spring_total.tweedie_log)
+anova(Spring_total.tweedie_log)
+
+gam.check(Spring_total.tweedie_log)
+```
+
+###3.3.3 Fourth Root Tweedie  
+```{r}
+#p  - the variance of an observation is proportional to its mean to the power p. p must be greater than 1 and less than or equal to 2. 1 would be Poisson, 2 is gamma.
+#link - The link function: one of "log", "identity", "inverse", "sqrt", or a power link (Tweedie only). GAM tweedie functions https://stat.ethz.ch/R-manual/R-patched/library/mgcv/html/Tweedie.html
+
+#fit a poisson glm with identity link
+Spring_total.tweedie_fr <- gam((GADUS.MORHUA)^.25 ~ s(bottemp) + s(surftemp) + factor(SEDIMENT) + s(botsalin) + s(surfsalin) + factor(SBFDEPTH), family = tw, data=Spring_Cod)
+
+#link = power(0)
+
+summary(Spring_total.tweedie_fr)
+AIC(Spring_total.tweedie_fr)
+anova(Spring_total.tweedie_fr)
+
+gam.check(Spring_total.tweedie_fr)
+```
+### 3.3.4 Fourth Root Gaussian 
+```{r}
+Spring_total.gamlog <- gam((GADUS.MORHUA)^.25 ~ s(bottemp) + s(surftemp) + factor(SEDIMENT) + s(botsalin) + s(surfsalin) + factor(SBFDEPTH), data=Spring_Cod)
+
+summary(Spring_total.gamlog)
+AIC(Spring_total.gamlog)
+anova(Spring_total.gamlog)
+
+#window(width=8, height=8, record=T) #code to see how the model fits
+#par(mfrow=c(2,2),mai=c(0.3,0.3,0.3,0.3),omi=c(0.1,0.1,0.1,0.1))
+gam.check(Spring_total.gamlog)
+```
+
+##Covariate Plot
+
+```{r}
+#dev.new(width=9,height=9,record=T)
+par(mfrow=c(2,3),mai=c(0.4,0.5,0.1,0.1),omi=c(0.1,0,0.01,0.01))
+
+#SurfSalin
+grid.res <- 500 # estimation grid resolution
+grid.bin <- data.frame(
+  "bottemp"=mean(Spring_Cod$bottemp, na.rm = TRUE),
+  "surftemp" = mean(Spring_Cod$surftemp, na.rm = TRUE),
+  "surfsalin"=seq(min(Spring_Cod$surfsalin, na.rm = TRUE), max(Spring_Cod$surfsalin, na.rm = TRUE),length=grid.res),
+  "botsalin"=mean(Spring_Cod$botsalin, na.rm = TRUE),
+  "SEDIMENT"= (Spring_Cod$SEDIMENT = "2" ),
+  "SBFDEPTH" = (Spring_Cod$SBFDEPTH = "13"))
+
+pred.bin <- predict(Spring_gam_presabs, grid.bin, type="response", se=T)
+niter <- 10000  # number of replicates
+pred.bin.boot <- matrix(NA,nrow=grid.res,ncol=niter)
+for(i in 1:grid.res){
+  pred.bin.boot[i,] <- rnorm(niter, pred.bin$fit[i], pred.bin$se.fit[i])}
+pred.mean <- apply(pred.bin.boot,1,mean, na.rm = TRUE)
+pred.95CI <- apply(pred.bin.boot,1,quantile,probs=c(0.025,0.975), na.rm = TRUE)
+plot(grid.bin$surfsalin, pred.mean, type="l", ylim=c(0,1),xlab="",lwd=2,cex.lab=1.4,ylab="",cex.axis=1.1,mgp=c(2,0.7,0))
+#axis(2,at=c(0,0.40,0.80),labels=c("0.0","0.4","0.8"),cex.axis=1.1,mgp=c(2,0.7,0))
+lines(grid.bin$surfsalin, pred.95CI[1,], lty=2)
+lines(grid.bin$surfsalin, pred.95CI[2,], lty=2)
+legend("topleft",legend="a. Surface Salinity",cex=1.4,bty="n")
+
+#Botsalin
+
+grid.bin <- data.frame(
+  "bottemp"=mean(Spring_Cod$bottemp, na.rm=TRUE),
+  "surftemp" = mean(Spring_Cod$surftemp, na.rm = TRUE),
+  "surfsalin"=mean(Spring_Cod$surfsalin, na.rm=TRUE),
+  "botsalin"=seq(min(Spring_Cod$botsalin, na.rm=TRUE), max(Spring_Cod$botsalin, na.rm=TRUE),length=grid.res),
+  "SEDIMENT"= (Spring_Cod$SEDIMENT = "2"),
+  "SBFDEPTH" = (Spring_Cod$SBFDEPTH = "13"))
+  
+
+pred.bin <- predict(Spring_gam_presabs, grid.bin, type="response", se=T)
+niter <- 10000  # number of replicates
+pred.bin.boot <- matrix(NA,nrow=grid.res,ncol=niter)
+for(i in 1:grid.res){
+  pred.bin.boot[i,] <- rnorm(niter, pred.bin$fit[i], pred.bin$se.fit[i])}
+pred.mean <- apply(pred.bin.boot,1,mean)
+pred.95CI <- apply(pred.bin.boot,1,quantile,probs=c(0.025,0.975))
+plot(grid.bin$botsalin, pred.mean, type="l", ylim=c(0,1),xlab="",lwd=2,cex.lab=1.4,ylab="",cex.axis=1.1,mgp=c(2,0.7,0))
+#axis(2,at=c(0,0.40,0.80),labels=c("0.0","0.4","0.8"),cex.axis=1.1,mgp=c(2,0.7,0))
+lines(grid.bin$botsalin, pred.95CI[1,], lty=2)
+lines(grid.bin$botsalin, pred.95CI[2,], lty=2)
+legend("topleft",legend="b. Bottom Salinity",cex=1.4,bty="n")
+
+#Surftemp
+
+grid.bin <- data.frame(
+  "bottemp"=mean(Spring_Cod$bottemp, na.rm=TRUE),
+  "surftemp" =seq(min(Spring_Cod$surftemp, na.rm=TRUE), max(Spring_Cod$surftemp, na.rm=TRUE),length=grid.res),
+  "surfsalin"=mean(Spring_Cod$surfsalin, na.rm = TRUE),
+  "botsalin"=mean(Spring_Cod$botsalin, na.rm=TRUE),
+  "SEDIMENT"= (Spring_Cod$SEDIMENT = "2" ),
+  "SBFDEPTH" = (Spring_Cod$SBFDEPTH = "13"))
+  
+
+pred.bin <- predict(Spring_gam_presabs, grid.bin, type="response", se=T)
+niter <- 10000  # number of replicates
+pred.bin.boot <- matrix(NA,nrow=grid.res,ncol=niter)
+for(i in 1:grid.res){
+  pred.bin.boot[i,] <- rnorm(niter, pred.bin$fit[i], pred.bin$se.fit[i])}
+pred.mean <- apply(pred.bin.boot,1,mean)
+pred.95CI <- apply(pred.bin.boot,1,quantile,probs=c(0.025,0.975))
+plot(grid.bin$surftemp, pred.mean, type="l", ylim=c(0,1),xlab="",lwd=2,cex.lab=1.4,ylab="",cex.axis=1.1,mgp=c(2,0.7,0))
+#axis(2,at=c(0,0.40,0.80),labels=c("0.0","0.4","0.8"),cex.axis=1.1,mgp=c(2,0.7,0))
+lines(grid.bin$surftemp, pred.95CI[1,], lty=2)
+lines(grid.bin$surftemp, pred.95CI[2,], lty=2)
+legend("topleft",legend="c. Surface Temp",cex=1.4,bty="n")
+
+
+#Bottemp
+
+grid.bin <- data.frame(
+  "bottemp"=seq(min(Spring_Cod$bottemp, na.rm=TRUE), max(Spring_Cod$bottemp, na.rm=TRUE),length=grid.res),
+  "surftemp" = mean(Spring_Cod$surftemp, na.rm = TRUE),
+  "surfsalin"=mean(Spring_Cod$surfsalin, na.rm = TRUE),
+  "botsalin"=mean(Spring_Cod$botsalin, na.rm=TRUE),
+  "SEDIMENT"= (Spring_Cod$SEDIMENT = "2" ),
+  "SBFDEPTH" = (Spring_Cod$SBFDEPTH = "13"))
+  
+
+pred.bin <- predict(Spring_gam_presabs, grid.bin, type="response", se=T)
+niter <- 10000  # number of replicates
+pred.bin.boot <- matrix(NA,nrow=grid.res,ncol=niter)
+for(i in 1:grid.res){
+  pred.bin.boot[i,] <- rnorm(niter, pred.bin$fit[i], pred.bin$se.fit[i])}
+pred.mean <- apply(pred.bin.boot,1,mean)
+pred.95CI <- apply(pred.bin.boot,1,quantile,probs=c(0.025,0.975))
+plot(grid.bin$bottemp, pred.mean, type="l", ylim=c(0,1),xlab="",lwd=2,cex.lab=1.4,ylab="",cex.axis=1.1,mgp=c(2,0.7,0))
+#axis(2,at=c(0,0.40,0.80),labels=c("0.0","0.4","0.8"),cex.axis=1.1,mgp=c(2,0.7,0))
+lines(grid.bin$bottemp, pred.95CI[1,], lty=2)
+lines(grid.bin$bottemp, pred.95CI[2,], lty=2)
+legend("topleft",legend="d. Bottom Temp",cex=1.4,bty="n")
+mtext("Probability of the Presence of Cod",side=2,outer=F, adj = 0, line=2.3,cex=1)
+
+#SEDIMENT
+grid.res.sed <- 6
+grid.bin <- data.frame(
+  "bottemp"=mean(Spring_Cod$bottemp, na.rm=TRUE),
+  "surftemp" = mean(Spring_Cod$surftemp, na.rm = TRUE),
+  "surfsalin"=mean(Spring_Cod$surfsalin, na.rm=TRUE),
+  "botsalin"=mean(Spring_Cod$botsalin, na.rm=TRUE),
+  "SEDIMENT"= c("3", "4", "1", "6", "5", "2"),
+  "SBFDEPTH" = (Spring_Cod$SBFDEPTH = "13"))
+ 
+
+pred.bin <- predict(Spring_gam_presabs, grid.bin, type="response", se=T)
+niter <- 10000  # number of replicates
+pred.bin.boot <- matrix(NA,nrow=grid.res.sed,ncol=niter)
+for(i in 1:grid.res.sed){
+  pred.bin.boot[i,] <- rnorm(niter, pred.bin$fit[i], pred.bin$se.fit[i])}
+pred.mean <- apply(pred.bin.boot,1,mean, na.rm = TRUE)
+pred.95CI <- apply(pred.bin.boot,1,quantile,probs=c(0.025,0.975), na.rm = TRUE)
+grid.bin$SEDIMENT <- factor(grid.bin$SEDIMENT ,levels=c("3", "4", "1", "6", "5", "2"),labels=c("0.03", "0.17", "0.35", "0.36", "0.48", "0.5"))
+plot(grid.bin$SEDIMENT, pred.mean, type="p", mgp=c(2,0.7,0), ylim=c(0,1),xlab="",lwd=2,cex.lab=1.4,ylab="",boxwex=0.01,cex.axis=1.1,xaxt="n")
+points(grid.bin$SEDIMENT,pred.mean, type="p",cex=1.5,pch=20)
+axis(1,at=c(1,2,3,4,5,6),labels=c("0.03", "0.17", "0.35", "0.36", "0.48", "0.5"),cex.axis=1.1,mgp=c(2,0.7,0))
+#axis(2,at=c(0,0.40,0.80),labels=c("0.0","0.4","0.8"),cex.axis=1.1,mgp=c(2,0.7,0))
+lines(grid.bin$SEDIMENT, pred.95CI[1,], lty=2)
+lines(grid.bin$SEDIMENT, pred.95CI[2,], lty=2)
+legend("topleft",legend="e. Sediment Size",cex=1.4,bty="n")
+
+#SBFDEPTH
+grid.res.SBF <- 18
+grid.bin <- data.frame(
+  "bottemp"=mean(Spring_Cod$bottemp, na.rm=TRUE),
+  "surftemp" = mean(Spring_Cod$surftemp, na.rm = TRUE),
+  "surfsalin"=mean(Spring_Cod$surfsalin, na.rm=TRUE),
+  "botsalin"=mean(Spring_Cod$botsalin, na.rm=TRUE),
+  "SEDIMENT"= (Spring_Cod$SEDIMENT = "2"),
+  "SBFDEPTH" = c("1", "7", "2","13", "9", "14", "3", "5", "8", "15", "4", "17", "6", "18", "11", "10", "16", "12"))
+  
+pred.bin <- predict(Spring_gam_presabs, grid.bin, type="response", se=T)
+niter <- 10000  # number of replicates
+pred.bin.boot <- matrix(NA,nrow=grid.res.SBF,ncol=niter)
+for(i in 1:grid.res.SBF){
+  pred.bin.boot[i,] <- rnorm(niter, pred.bin$fit[i], pred.bin$se.fit[i])}
+pred.mean <- apply(pred.bin.boot,1,mean, na.rm = TRUE)
+pred.95CI <- apply(pred.bin.boot,1,quantile,probs=c(0.025,0.975), na.rm = TRUE)
+grid.bin$SBFDEPTH <- factor(grid.bin$SBFDEPTH ,levels=c("1", "7", "2","13", "9", "14", "3", "5", "8", "15", "4", "17", "6", "18", "11", "10", "16", "12"))
+plot(grid.bin$SBFDEPTH, pred.mean, type="p", mgp=c(2,0.7,0), xlim=c(1,18), ylim=c(0,1),xlab="",lwd=2,cex.lab=1.4,ylab="",boxwex=0.01,cex.axis=1.1,xaxt="n")
+points(grid.bin$SBFDEPTH,pred.mean, type="p",cex=1.5,pch=20)
+axis(1,at=c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18),labels=c("Shllw Dep.", "Mdrte Dep", "High Flat","Moderate Flat", "Smwht Deep Flat", "Deeper Dep", "Deeper Flat", "Low Slope", "Shallow Flat", "Side Slope", "Steep", "Deepest Flat", "Smwht Deep Dep", "Deep Flat", "Deepest Dep", "Vry Shallow Flat", "Vry Shallow Dep", "Deep Dep"), cex.axis=.4,mgp=c(2,0.7,0), las = 2)
+#axis(2,at=c(0,0.40,0.80),labels=c("0.0","0.4","0.8"),cex.axis=1.1,mgp=c(2,0.7,0))
+lines(grid.bin$SBFDEPTH, pred.95CI[1,], lty=2)
+lines(grid.bin$SBFDEPTH, pred.95CI[2,], lty=2)
+legend("topleft",legend="f. Benthic Habitat",cex=1.4,bty="n")
+
+```
+
+```{r}
+dev.new(width=12,height=8,record=T)
+par(mfrow=c(2,3),mai=c(0.3,0.3,0,0),omi=c(0.35,0.35,0.1,0.1))
+plot(Spring_total.tweedie_fr, shade=TRUE, seWithMean=TRUE, scale=0, all.terms=TRUE)
+```
+
+
+#4. Modeling - Fall
+##4.1 Pres/Abs 
+```{r}
+#binomial gam submodel. Binomial answers how many successes we get in a fixed number of trials. Random variable x = # of successes
+
+Fall_gam_presabs <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + factor(SEDIMENT) + s(botsalin) + s(surfsalin) + factor(SBFDEPTH), family = binomial(link = "logit"), data=Fall_Cod_pres)
+
+summary(Fall_gam_presabs)
+AIC(Fall_gam_presabs)
+anova(Fall_gam_presabs)
+
+#code to see how the model fits 
+#windows(width=8,height=8,record=T) #code to see how the model fits 
+#par(mfrow=c(2,2),mai=c(0.3,0.3,0.3,0.3),omi=c(0.1,0.1,0.1,0.1))
+gam.check(Fall_gam_presabs)
+```
+no bot temp
+```{r}
+#binomial gam submodel. Binomial answers how many successes we get in a fixed number of trials. Random variable x = # of successes
+
+Fall_gam_presabs <- gam(GADUS.MORHUA ~ s(surftemp) + factor(SEDIMENT) + s(botsalin) + s(surfsalin) + factor(SBFDEPTH), family = binomial(link = "logit"), data=Fall_Cod_pres)
+
+summary(Fall_gam_presabs)
+AIC(Fall_gam_presabs)
+anova(Fall_gam_presabs)
+
+#code to see how the model fits 
+#windows(width=8,height=8,record=T) #code to see how the model fits 
+#par(mfrow=c(2,2),mai=c(0.3,0.3,0.3,0.3),omi=c(0.1,0.1,0.1,0.1))
+gam.check(Fall_gam_presabs)
+```
+no surf temp
+```{r}
+#binomial gam submodel. Binomial answers how many successes we get in a fixed number of trials. Random variable x = # of successes
+
+Fall_gam_presabs <- gam(GADUS.MORHUA ~ s(bottemp) + factor(SEDIMENT) + s(botsalin) + s(surfsalin) + factor(SBFDEPTH), family = binomial(link = "logit"), data=Fall_Cod_pres)
+
+summary(Fall_gam_presabs)
+AIC(Fall_gam_presabs)
+anova(Fall_gam_presabs)
+
+#code to see how the model fits 
+#windows(width=8,height=8,record=T) #code to see how the model fits 
+#par(mfrow=c(2,2),mai=c(0.3,0.3,0.3,0.3),omi=c(0.1,0.1,0.1,0.1))
+gam.check(Fall_gam_presabs)
+```
+no sediment
+```{r}
+#binomial gam submodel. Binomial answers how many successes we get in a fixed number of trials. Random variable x = # of successes
+
+Fall_gam_presabs <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + s(botsalin) + s(surfsalin) + factor(SBFDEPTH), family = binomial(link = "logit"), data=Fall_Cod_pres)
+
+summary(Fall_gam_presabs)
+AIC(Fall_gam_presabs)
+anova(Fall_gam_presabs)
+
+#code to see how the model fits 
+#windows(width=8,height=8,record=T) #code to see how the model fits 
+#par(mfrow=c(2,2),mai=c(0.3,0.3,0.3,0.3),omi=c(0.1,0.1,0.1,0.1))
+gam.check(Fall_gam_presabs)
+```
+no bot salin
+```{r}
+#binomial gam submodel. Binomial answers how many successes we get in a fixed number of trials. Random variable x = # of successes
+
+Fall_gam_presabs <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + factor(SEDIMENT) + s(surfsalin) + factor(SBFDEPTH), family = binomial(link = "logit"), data=Fall_Cod_pres)
+
+summary(Fall_gam_presabs)
+AIC(Fall_gam_presabs)
+anova(Fall_gam_presabs)
+
+#code to see how the model fits 
+#windows(width=8,height=8,record=T) #code to see how the model fits 
+#par(mfrow=c(2,2),mai=c(0.3,0.3,0.3,0.3),omi=c(0.1,0.1,0.1,0.1))
+gam.check(Fall_gam_presabs)
+```
+no surf salin
+```{r}
+#binomial gam submodel. Binomial answers how many successes we get in a fixed number of trials. Random variable x = # of successes
+
+Fall_gam_presabs <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + factor(SEDIMENT) + s(botsalin) + factor(SBFDEPTH), family = binomial(link = "logit"), data=Fall_Cod_pres)
+
+summary(Fall_gam_presabs)
+AIC(Fall_gam_presabs)
+anova(Fall_gam_presabs)
+
+#code to see how the model fits 
+#windows(width=8,height=8,record=T) #code to see how the model fits 
+#par(mfrow=c(2,2),mai=c(0.3,0.3,0.3,0.3),omi=c(0.1,0.1,0.1,0.1))
+gam.check(Fall_gam_presabs)
+```
+no SBF depth
+```{r}
+#binomial gam submodel. Binomial answers how many successes we get in a fixed number of trials. Random variable x = # of successes
+
+Fall_gam_presabs <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + factor(SEDIMENT) + s(botsalin) + s(surfsalin), family = binomial(link = "logit"), data=Fall_Cod_pres)
+
+summary(Fall_gam_presabs)
+AIC(Fall_gam_presabs)
+anova(Fall_gam_presabs)
+
+#code to see how the model fits 
+#windows(width=8,height=8,record=T) #code to see how the model fits 
+#par(mfrow=c(2,2),mai=c(0.3,0.3,0.3,0.3),omi=c(0.1,0.1,0.1,0.1))
+gam.check(Fall_gam_presabs)
+```
+
+##4.2 Positive CPUE
+###4.2.1. Tweedie
+```{r}
+#p  - the variance of an observation is proportional to its mean to the power p. p must be greater than 1 and less than or equal to 2. 1 would be Poisson, 2 is gamma.
+#link - The link function: one of "log", "identity", "inverse", "sqrt", or a power link (Tweedie only). GAM tweedie functions https://stat.ethz.ch/R-manual/R-patched/library/mgcv/html/Tweedie.html
+
+#fit a poisson glm with identity link
+Fall_pres.tweedie <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + SEDIMENT + s(botsalin) + s(surfsalin) + SBFDEPTH, family = tw(link = "log"), data=Caught_Fall_Cod)
+
+#link = power(0)
+
+summary(Fall_pres.tweedie)
+AIC(Fall_pres.tweedie)
+anova(Fall_pres.tweedie)
+
+gam.check(Fall_pres.tweedie)
+```
+###4.2.2 Gamma
+```{r}
+Fall_pres.gamma <- gam(GADUS.MORHUA ~ s(bottemp) + s(surftemp) + SEDIMENT + s(botsalin) + s(surfsalin) + SBFDEPTH, family = Gamma(link = "inverse"), data=Caught_Fall_Cod)
+
+summary(Fall_pres.gamma)
+AIC(Fall_pres.gamma)
+anova(Fall_pres.gamma)
+
+gam.check(Fall_pres.gamma)
+```
+###4.2.3 Gaussian Log
+```{r}
+Fall_pres.gamlog <- gam(log(GADUS.MORHUA) ~ s(bottemp) + s(surftemp) + SEDIMENT + s(botsalin) + s(surfsalin) + SBFDEPTH, data=Caught_Fall_Cod)
+
+summary(Fall_pres.gamlog)
+AIC(Fall_pres.gamlog)
+anova(Fall_pres.gamlog)
+
+#window(width=8, height=8, record=T) #code to see how the model fits
+#par(mfrow=c(2,2),mai=c(0.3,0.3,0.3,0.3),omi=c(0.1,0.1,0.1,0.1))
+gam.check(Fall_pres.gamlog)
+```
+###4.2.4 Gaussian Fourth Root 
+```{r}
+Fall_pres.gam4log <- gam((log(GADUS.MORHUA)^0.25) ~ s(bottemp) + s(surftemp) + SEDIMENT + s(botsalin) + s(surfsalin) + SBFDEPTH, data=Caught_Fall_Cod)
+
+
+summary(Fall_pres.gam4log)
+AIC(Fall_pres.gam4log)
+anova(Fall_pres.gam4log)
+
+#window(width=8, height=8, record=T) #code to see how the model fits
+#par(mfrow=c(2,2),mai=c(0.3,0.3,0.3,0.3),omi=c(0.1,0.1,0.1,0.1))
+
+#https://www.rdocumentation.org/packages/mgcv/versions/1.2-2/topics/gam.check
+gam.check(Fall_pres.gam4log)
+      
+```
+
+##4.3 Total Biomass 
+### 4.3.1 Fourth Root Tweedie
+
+```{r}
+#p  - the variance of an observation is proportional to its mean to the power p. p must be greater than 1 and less than or equal to 2. 1 would be Poisson, 2 is gamma.
+#link - The link function: one of "log", "identity", "inverse", "sqrt", or a power link (Tweedie only). GAM tweedie functions https://stat.ethz.ch/R-manual/R-patched/library/mgcv/html/Tweedie.html
+
+#fit a poisson glm with identity link
+Fall_total.tweedie_fr <- gam((GADUS.MORHUA)^.25 ~ s(bottemp) + s(surftemp) + factor(SEDIMENT) + s(botsalin) + s(surfsalin) + factor(SBFDEPTH), family = tw, data=Fall_Cod)
+
+#link = power(0)
+
+summary(Fall_total.tweedie_fr)
+AIC(Fall_total.tweedie_fr)
+anova(Fall_total.tweedie_fr)
+
+gam.check(Fall_total.tweedie_fr)
+```
+### 4.3.2 Fourth Root Gaussian 
+```{r}
+Fall_total.gamlog <- gam((GADUS.MORHUA)^.25 ~ s(bottemp) + s(surftemp) + SEDIMENT + s(botsalin) + s(surfsalin) + SBFDEPTH, data=Fall_Cod)
+
+summary(Fall_total.gamlog)
+AIC(Fall_total.gamlog)
+anova(Fall_total.gamlog)
+
+#window(width=8, height=8, record=T) #code to see how the model fits
+#par(mfrow=c(2,2),mai=c(0.3,0.3,0.3,0.3),omi=c(0.1,0.1,0.1,0.1))
+gam.check(Fall_total.gamlog)
+```
+
+##Covariate Plot
+
+```{r}
+#dev.new(width=9,height=9,record=T)
+par(mfrow=c(2,3),mai=c(0.4,0.5,0.1,0.1),omi=c(0.1,0,0.01,0.01))
+
+#Surftemp
+grid.res <- 500 # estimation grid resolution
+grid.bin <- data.frame(
+  "bottemp"=mean(Fall_Cod$bottemp, na.rm = TRUE),
+  "surftemp"=seq(min(Fall_Cod$surftemp, na.rm = TRUE), max(Fall_Cod$surftemp, na.rm = TRUE),length=grid.res),
+  "SBFDEPTH" = (Spring_Cod$SBFDEPTH = "13"),
+  "surfsalin"=mean(Fall_Cod$surfsalin, na.rm = TRUE),
+  "botsalin"=mean(Fall_Cod$botsalin, na.rm = TRUE),
+  "SEDIMENT"= (Fall_Cod$SEDIMENT = "2"))
+  
+
+pred.bin <- predict(Fall_gam_presabs, grid.bin, type="response", se=T)
+niter <- 10000  # number of replicates
+pred.bin.boot <- matrix(NA,nrow=grid.res,ncol=niter)
+for(i in 1:grid.res){
+  pred.bin.boot[i,] <- rnorm(niter, pred.bin$fit[i], pred.bin$se.fit[i])}
+pred.mean <- apply(pred.bin.boot,1,mean, na.rm = TRUE)
+pred.95CI <- apply(pred.bin.boot,1,quantile,probs=c(0.025,0.975), na.rm = TRUE)
+plot(grid.bin$surftemp, pred.mean, type="l", ylim=c(0,1),xlab="",lwd=2,cex.lab=1.4,ylab="",cex.axis=1.1,mgp=c(2,0.7,0))
+#axis(2,at=c(0,0.40,0.80),labels=c("0.0","0.4","0.8"),cex.axis=1.1,mgp=c(2,0.7,0))
+lines(grid.bin$surftemp, pred.95CI[1,], lty=2)
+lines(grid.bin$surftemp, pred.95CI[2,], lty=2)
+legend("topleft",legend="a. Surface Temp",cex=1.4,bty="n")
+
+#Bottemp
+
+grid.bin <- data.frame(
+  "bottemp"=seq(min(Fall_Cod$bottemp, na.rm=TRUE), max(Fall_Cod$bottemp, na.rm=TRUE),length=grid.res),
+  "surftemp"=mean(Fall_Cod$surftemp, na.rm = TRUE),
+  "SBFDEPTH" = (Spring_Cod$SBFDEPTH = "13"),
+  "surfsalin"=mean(Fall_Cod$surfsalin, na.rm=TRUE),
+  "botsalin"=mean(Fall_Cod$botsalin, na.rm=TRUE),
+  "SEDIMENT"= (Fall_Cod$SEDIMENT = "2"))
+  
+
+pred.bin <- predict(Fall_gam_presabs, grid.bin, type="response", se=T)
+niter <- 10000  # number of replicates
+pred.bin.boot <- matrix(NA,nrow=grid.res,ncol=niter)
+for(i in 1:grid.res){
+  pred.bin.boot[i,] <- rnorm(niter, pred.bin$fit[i], pred.bin$se.fit[i])}
+pred.mean <- apply(pred.bin.boot,1,mean)
+pred.95CI <- apply(pred.bin.boot,1,quantile,probs=c(0.025,0.975))
+plot(grid.bin$bottemp, pred.mean, type="l", ylim=c(0,1),xlab="",lwd=2,cex.lab=1.4,ylab="",cex.axis=1.1,mgp=c(2,0.7,0))
+#axis(2,at=c(0,0.40,0.80),labels=c("0.0","0.4","0.8"),cex.axis=1.1,mgp=c(2,0.7,0))
+lines(grid.bin$bottemp, pred.95CI[1,], lty=2)
+lines(grid.bin$bottemp, pred.95CI[2,], lty=2)
+legend("topleft",legend="b. Bottom Temp",cex=1.4,bty="n")
+
+#Surfsalin
+
+grid.bin <- data.frame(
+  "bottemp"=mean(Fall_Cod$bottemp, na.rm=TRUE),
+  "surftemp"=mean(Fall_Cod$surftemp, na.rm=TRUE),
+  "SBFDEPTH" = (Spring_Cod$SBFDEPTH = "13"),
+  "surfsalin"=seq(min(Fall_Cod$surfsalin, na.rm=TRUE), max(Fall_Cod$surfsalin, na.rm=TRUE),length=grid.res),
+  "botsalin"=mean(Fall_Cod$botsalin, na.rm=TRUE),
+  "SEDIMENT"= (Fall_Cod$SEDIMENT = "2"))
+  
+
+pred.bin <- predict(Fall_gam_presabs, grid.bin, type="response", se=T)
+niter <- 10000  # number of replicates
+pred.bin.boot <- matrix(NA,nrow=grid.res,ncol=niter)
+for(i in 1:grid.res){
+  pred.bin.boot[i,] <- rnorm(niter, pred.bin$fit[i], pred.bin$se.fit[i])}
+pred.mean <- apply(pred.bin.boot,1,mean)
+pred.95CI <- apply(pred.bin.boot,1,quantile,probs=c(0.025,0.975))
+plot(grid.bin$surfsalin, pred.mean, type="l", ylim=c(0,1),xlab="",lwd=2,cex.lab=1.4,ylab="",cex.axis=1.1,mgp=c(2,0.7,0))
+#axis(2,at=c(0,0.40,0.80),labels=c("0.0","0.4","0.8"),cex.axis=1.1,mgp=c(2,0.7,0))
+lines(grid.bin$surfsalin, pred.95CI[1,], lty=2)
+lines(grid.bin$surfsalin, pred.95CI[2,], lty=2)
+legend("topleft",legend="c. Surface Salinity",cex=1.4,bty="n")
+
+#Botsalin
+
+grid.bin <- data.frame(
+  "bottemp"=mean(Fall_Cod$bottemp, na.rm=TRUE),
+  "surftemp"=mean(Fall_Cod$surftemp, na.rm=TRUE),
+  "SBFDEPTH" = (Spring_Cod$SBFDEPTH = "13"),
+  "surfsalin"=mean(Fall_Cod$surfsalin, na.rm=TRUE),
+  "botsalin"=seq(min(Fall_Cod$botsalin, na.rm=TRUE), max(Fall_Cod$botsalin, na.rm=TRUE),length=grid.res),
+  "SEDIMENT"= (Fall_Cod$SEDIMENT = "2"))
+  
+
+pred.bin <- predict(Fall_gam_presabs, grid.bin, type="response", se=T)
+niter <- 10000  # number of replicates
+pred.bin.boot <- matrix(NA,nrow=grid.res,ncol=niter)
+for(i in 1:grid.res){
+  pred.bin.boot[i,] <- rnorm(niter, pred.bin$fit[i], pred.bin$se.fit[i])}
+pred.mean <- apply(pred.bin.boot,1,mean)
+pred.95CI <- apply(pred.bin.boot,1,quantile,probs=c(0.025,0.975))
+plot(grid.bin$botsalin, pred.mean, type="l", ylim=c(0,1),xlab="",lwd=2,cex.lab=1.4,ylab="",cex.axis=1.1,mgp=c(2,0.7,0))
+#axis(2,at=c(0,0.40,0.80),labels=c("0.0","0.4","0.8"),cex.axis=1.1,mgp=c(2,0.7,0))
+lines(grid.bin$botsalin, pred.95CI[1,], lty=2)
+lines(grid.bin$botsalin, pred.95CI[2,], lty=2)
+legend("topleft",legend="d. Bottom Salinity",cex=1.4,bty="n")
+mtext("Probability of the Presence of Cod",side=2,outer=F, adj = 0, line=2.3,cex=1)
+
+#SEDIMENT
+grid.res.sed <- 6
+grid.bin <- data.frame(
+  "bottemp"=mean(Fall_Cod$bottemp, na.rm=TRUE),
+  "surftemp"=mean(Fall_Cod$surftemp, na.rm=TRUE),
+  "SBFDEPTH" = (Spring_Cod$SBFDEPTH = "13"),
+  "surfsalin"=mean(Fall_Cod$surfsalin, na.rm=TRUE),
+  "botsalin"=mean(Fall_Cod$botsalin, na.rm=TRUE),
+  "SEDIMENT"= c("3", "4", "1", "6", "5", "2"))
+ 
+
+pred.bin <- predict(Fall_gam_presabs, grid.bin, type="response", se=T)
+niter <- 10000  # number of replicates
+pred.bin.boot <- matrix(NA,nrow=grid.res.sed,ncol=niter)
+for(i in 1:grid.res.sed){
+  pred.bin.boot[i,] <- rnorm(niter, pred.bin$fit[i], pred.bin$se.fit[i])}
+pred.mean <- apply(pred.bin.boot,1,mean, na.rm = TRUE)
+pred.95CI <- apply(pred.bin.boot,1,quantile,probs=c(0.025,0.975), na.rm = TRUE)
+grid.bin$SEDIMENT <- factor(grid.bin$SEDIMENT ,levels=c("3", "4", "1", "6", "5", "2"),labels=c("0.03", "0.17", "0.35", "0.36", "0.48", "0.5"))
+plot(grid.bin$SEDIMENT, pred.mean, type="p", mgp=c(2,0.7,0), ylim=c(0,1),xlab="",lwd=2,cex.lab=1.4,ylab="",boxwex=0.01,cex.axis=1.1,xaxt="n")
+points(grid.bin$SEDIMENT,pred.mean, type="p",cex=1.5,pch=19)
+axis(1,at=c(1,2,3,4,5,6),labels=c("0.03", "0.17", "0.35", "0.36", "0.48", "0.5"),cex.axis=1.1,mgp=c(2,0.7,0))
+#axis(2,at=c(0,0.40,0.80),labels=c("0.0","0.4","0.8"),cex.axis=1.1,mgp=c(2,0.7,0))
+lines(grid.bin$SEDIMENT, pred.95CI[1,], lty=2)
+lines(grid.bin$SEDIMENT, pred.95CI[2,], lty=2)
+legend("topleft",legend="e. Sediment Size",cex=1.4,bty="n")
+
+
+#SBFDEPTH
+grid.res.SBF <- 18
+grid.bin <- data.frame(
+  "bottemp"=mean(Fall_Cod$bottemp, na.rm=TRUE),
+  "surftemp"=mean(Fall_Cod$surftemp, na.rm=TRUE),
+  "surfsalin"=mean(Fall_Cod$surfsalin, na.rm=TRUE),
+  "botsalin"=mean(Fall_Cod$botsalin, na.rm=TRUE),
+  "SEDIMENT"= (Fall_Cod$SEDIMENT = "2"),
+  "SBFDEPTH" = c("1", "7", "2","13", "9", "14", "3", "5", "8", "15", "4", "17", "6", "18", "11", "10", "16", "12"))
+  
+pred.bin <- predict(Fall_gam_presabs, grid.bin, type="response", se=T)
+niter <- 10000  # number of replicates
+pred.bin.boot <- matrix(NA,nrow=grid.res.SBF,ncol=niter)
+for(i in 1:grid.res.SBF){
+  pred.bin.boot[i,] <- rnorm(niter, pred.bin$fit[i], pred.bin$se.fit[i])}
+pred.mean <- apply(pred.bin.boot,1,mean, na.rm = TRUE)
+pred.95CI <- apply(pred.bin.boot,1,quantile,probs=c(0.025,0.975), na.rm = TRUE)
+grid.bin$SBFDEPTH <- factor(grid.bin$SBFDEPTH ,levels=c("1", "7", "2","13", "9", "14", "3", "5", "8", "15", "4", "17", "6", "18", "11", "10", "16", "12"))
+plot(grid.bin$SBFDEPTH, pred.mean, type="p", mgp=c(2,0.7,0), xlim=c(1,18), ylim=c(0,1),xlab="",lwd=2,cex.lab=1.4,ylab="",boxwex=0.01,cex.axis=1.1,xaxt="n")
+points(grid.bin$SBFDEPTH,pred.mean, type="p",cex=1.5,pch=20)
+axis(1,at=c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18),labels=c("Shllw Dep.", "Mdrte Dep", "High Flat","Moderate Flat", "Smwht Deep Flat", "Deeper Dep", "Deeper Flat", "Low Slope", "Shllw Flat", "Side Slope", "Steep", "Deepest Flat", "Smwht Deep Dep", "Deep Flat", "Deepest Dep", "Vry Shllw Flat", "Vry Shllw Dep", "Deep Dep"), cex.axis=.4,mgp=c(2,0.7,0), las = 2)
+#axis(2,at=c(0,0.40,0.80),labels=c("0.0","0.4","0.8"),cex.axis=1.1,mgp=c(2,0.7,0))
+lines(grid.bin$SBFDEPTH, pred.95CI[1,], lty=2)
+lines(grid.bin$SBFDEPTH, pred.95CI[2,], lty=2)
+legend("topleft",legend="f. Benthic Habitat",cex=1.4,bty="n")
+
+
+```
+
+```{r}
+dev.new(width=12,height=8,record=T)
+par(mfrow=c(2,3),mai=c(0.3,0.3,0,0),omi=c(0.35,0.35,0.1,0.1))
+plot(Fall_total.tweedie_fr, shade=TRUE, seWithMean=TRUE, scale=0, all.terms=TRUE)
+```
+
+#5. Building habitat predictions from models 
+##5.1 Raster Paths
+```{r}
+## Raster paths
+surfsalin <- raster("C:/Users/bs315/Desktop/ENV Rasters/MyProject/Spring/surfsalin_final.tif")
+surfsalin
+surftemp <- raster("C:/Users/bs315/Desktop/ENV Rasters/MyProject/Spring/surftemp_final.tif")
+surftemp
+bottemp <- raster("C:/Users/bs315/Desktop/ENV Rasters/MyProject/Spring/bottemp_final.tif")
+bottemp
+botsalin <- raster("C:/Users/bs315/Desktop/ENV Rasters/MyProject/Spring/botsalin_final.tif")
+botsalin
+
+SEDIMENT <- raster("C:/Users/bs315/Desktop/ENV Rasters/MyProject/Spring/SEDfloat_final.tif")
+SEDIMENT
+SBFDEPTH <- raster("C:/Users/bs315/Desktop/ENV Rasters/MyProject/Spring/SBFfloat_final.tif")
+SBFDEPTH
+
+
+```
+
+##5.2 Spring Prediction
+Raster Stack Spring
+```{r}
+Spring_rs_stack <- stack(bottemp, surftemp, SEDIMENT, botsalin, surfsalin, SBFDEPTH)
+names(Spring_rs_stack) <- c("bottemp", "surftemp", "SEDIMENT", "botsalin", "surfsalin","SBFDEPTH")
+
+
+raster::stack(Spring_rs_stack)
+plot(Spring_rs_stack, col = RColorBrewer::brewer.pal(11, "RdBu"))
+
+```
+
+Log odds/logit surface
+```{r}
+loglogit_raster = predict(Spring_rs_stack,Spring_gam_presabs,type = "link")
+plot(loglogit_raster, col = RColorBrewer::brewer.pal(11, "RdBu"))
+writeRaster(loglogit_raster,filename = "loglogitspring_gam.tif",overwrite = TRUE)
+```
+
+Habitat Prob. Surface
+```{r}
+Spring_prob_raster = predict(Spring_rs_stack, Spring_gam_presabs, type="response")
+plot(Spring_prob_raster, col = RColorBrewer::brewer.pal(11, "RdBu"))
+writeRaster(Spring_prob_raster,filename = "probspring_gam.tif",overwrite = TRUE)
+```
+
+Binary Classification (Prob > .5)
+```{r}
+Spring_habitat_raster <- reclassify(Spring_prob_raster, c(-Inf,0.5,0, 0.5,1,1))
+plot(Spring_habitat_raster, col = RColorBrewer::brewer.pal(11, "RdBu"))
+writeRaster(Spring_habitat_raster,filename = "habitatspring_gam.tif",overwrite = TRUE)
+```
+
+
+##5.3 Fall Prediction 
+```{r}
+surfsalin_fall <- raster("C:/Users/bs315/Desktop/ENV Rasters/MyProject/Fall/surfsalin_fall.tif")
+surftemp_fall <- raster("C:/Users/bs315/Desktop/ENV Rasters/MyProject/Fall/surftemp_fall.tif")
+bottemp_fall <- raster("C:/Users/bs315/Desktop/ENV Rasters/MyProject/Fall/bottemp_fall.tif")
+botsalin_fall <- raster("C:/Users/bs315/Desktop/ENV Rasters/MyProject/Fall/botsalin_fall.tif")
+```
+
+Raster Stack Fall
+```{r}
+# Change to reading in the raster stack
+Fall_rs_stack <- stack(bottemp_fall, surftemp_fall, SEDIMENT, botsalin_fall, surfsalin_fall,SBFDEPTH)
+names(Fall_rs_stack) <- c("bottemp", "surftemp", "SEDIMENT", "botsalin", "surfsalin", "SBFDEPTH")
+
+
+raster::stack(Fall_rs_stack)
+plot(Fall_rs_stack, col = RColorBrewer::brewer.pal(11, "RdBu"))
+```
+
+Log odds/logit surface
+```{r}
+Fall_loglogit_raster = predict(Fall_rs_stack, Fall_gam_presabs, type="link")
+plot(Fall_loglogit_raster, col = RColorBrewer::brewer.pal(11, "RdBu"))
+writeRaster(Fall_loglogit_raster,filename = "loglogitfall_gam.tif",overwrite = TRUE)
+
+```
+
+Habitat Prob. Surface
+```{r}
+Fall_prob_raster = predict(Fall_rs_stack, Fall_gam_presabs, type="response")
+plot(Fall_prob_raster, col = RColorBrewer::brewer.pal(11, "RdBu"))
+writeRaster(Fall_prob_raster,filename = "probfall_gam.tif", overwrite = TRUE)
+```
+
+Binary Classification (Prob > .5)
+```{r}
+Fall_habitat_raster <- reclassify(Fall_prob_raster, c(-Inf,0.5,0, 0.5,1,1))
+plot(Fall_habitat_raster, col = RColorBrewer::brewer.pal(11, "RdBu"))
+writeRaster(Fall_habitat_raster,filename = "habitatfall_gam.tif", overwrite = TRUE)
+```
