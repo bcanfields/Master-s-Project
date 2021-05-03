@@ -1,0 +1,184 @@
+---
+title: 'Implementing Potential Path Volume (PPV) to Examine Grey Seal Space Use'
+author: "Beatrice Smith"
+date: "April, 2021"
+output: html_document
+---
+- This script requires a partner script to calculate the voxel size for calculations 
+
+## Installing the package
+Adapted from jedalong/wildlifeTG Github
+
+#1. Loading Packages
+```{r}
+#install.packages('devtools')
+library(devtools)
+#install_github('jedalong/wildlifeTG')
+devtools::install_github("jedalong/wildlifeTG") #Package containing the PPV command
+
+library(tidyverse) #data formatting
+library(wildlifeTG) #PPV Calcs
+library(dplyr) #Data manipulation
+library(lubridate) #Data manipulation
+library(adehabitatLT) #Partner package for WildlifeTG
+```
+
+Max velocity function
+```{r}
+DistanceTwo3Dpoints <- function(x,y,z,x1,y1,z1) { #Adapted from Demsar and Long, 2019
+  
+  d2 <- (x-x1)^2+(y-y1)^2+(z-z1)^2
+
+  f <- sqrt(d2)
+  
+  return(f)  
+}
+```
+
+subsetting some data and choosing random stratified samples
+
+```{r}
+Total_654 <- read.csv('654_All.csv', stringsAsFactors=FALSE) #read in data for chosen individual
+
+Total_654 %>% #Winter/fall random stratified sample
+   filter(TrajID > 108) %>% 
+   sample_n(10)
+
+Total_654 %>% #Spring/summer random stratified sample
+   filter(TrajID < 108) %>% 
+   sample_n(10)
+```
+ 
+ From WildlifeTG Sample Script: 
+ 
+"The function {ppv} is used to create a potential path volume. 
+- The input is an *ltraj* object from the *adehabitat* package, where an additional column in the *infolocs* slot provides the elevation/altitude information. The column name is passed into the function \texttt{ppv}. 
+- We need to specificy the a parameter *vmax* which describes the maximum movement speed (in 3D) often it is useful to derive this from the tracking data in some way. 
+- Finally, we must specify a voxel resolution, in the same units in which x, y, z are provided. It is typical that x, y, z are in the same units, but there may be reasons to specify z in different units to exaggerate vertical effects for example. The voxel resolution is the greatest factor in how long the algorithm takes, consider the range of the values in x, y, and z when choosing the parameter *vox* and I have found that a good rule of thumb is to try to not have more than 1 million voxels in the map."
+
+
+#2.Importing and cleaning data
+```{r}
+s <- Total_654 #renaming dataframe
+head(s)
+```
+
+
+```{r}
+
+s <- s %>% #filtering dataframe for selected TrajID from stratified sample
+  filter(TrajID == 39)
+
+s <- s[order(s$Tsec0),] #Organizing dataframe by dive number
+
+listOfTsec0 <- unique(s$Tsec0) 
+Tsec0Indices <- which(s$Tsec0 == listOfTsec0)
+Tsec0Length <- length(Tsec0Indices)
+```
+
+
+```{r}
+s <- s %>%  
+  mutate(dive = 1:Tsec0Length) #making a column of dives assigned by order from t = 0
+```
+
+#3. Find Max Velocity
+Adapted from Demsar and Long, 2019
+
+```{r}
+listOfDives <- unique(s$dive)
+DiveIndices <- which(s$dive == listOfDives)
+DiveLength <- length(DiveIndices)
+
+s$d <- 0 
+s$dt <- 0     # time on segment: dt_i = T_i - T_(i-1) 
+s$v <- 0 
+```
+  
+```{r}
+  for (i in 2:DiveLength) {
+
+print(i)
+# distance between the two 3D points that define the segment: d_i = d(P_i, P_(i-1))
+    
+s$d[DiveIndices[i]] <- DistanceTwo3Dpoints(s$x[DiveIndices[i-1]],s$y[DiveIndices[i-1]],s$z[DiveIndices[i-1]],
+                                           s$x[DiveIndices[i]],s$y[DiveIndices[i]],s$z[DiveIndices[i]])
+    
+# time on segment: dt_i = T_i - T_(i-1)
+s$dt[DiveIndices[i]] <- s$Tsec0[DiveIndices[i]]-s$Tsec0[DiveIndices[i-1]] #These need to be in secs
+
+# velocity on segment: v_i = d_i / dt_i
+s$v[DiveIndices[i]] <- s$d[DiveIndices[i]]/s$dt[DiveIndices[i]]
+    
+  }
+```
+    
+```{r}
+# Find the largest velocity
+v_m <- max(s$v)
+
+# Find next largest velocity to five decimal places of precision
+vv <- s$v[DiveIndices]
+
+#vv <- as.data.frame(s$v[DiveIndices]) # to make this into a data frame
+sort.v <- sort(vv, decreasing = TRUE) # sort in descending order
+where.next <- 1 
+while (round(sort.v[where.next],digits=5) == round(sort.v[1], digits=5)) {where.next <- where.next + 1}
+v_m1 <- sort.v[where.next]
+  
+# Calculate v_max for PPV modeling
+v_max <- 2 * v_m - v_m1  #why times two? 
+```
+
+#4. Identify and Plot Trajectory
+##4.1 Reformat for for PPV calc
+```{r}
+s$X <- NULL
+s$TrajID <- NULL # Taking out Traj ID
+s$Tsec0 <- NULL #taking out Tsec Time
+s$dive <- NULL #take out dive ID
+s$d <- NULL #taking out distance
+s$dt <- NULL #taking out delta t
+s$v <- NULL #taking out velocity 
+```
+
+##4.2 Define Traj parameter
+```{r}
+
+s <- s %>% 
+  mutate(t = (as.POSIXct(s$t, optional = FALSE)))
+
+is.ymd_hms <- function(x) !is.na(lubridate::ymd_hms(x, quiet = TRUE))
+is.ymd_hms(s$t)
+
+```
+
+```{r}
+library(adehabitatLT)
+trajs <- as.ltraj(s,date=s$t,id='654_39', infolocs = s)
+plot(trajs)
+```
+ 
+ From WildlifeTG Sample Script: 
+"Next we can create the PPV. We need to carefully select values for vmax and vox. Here given the simplified nature of the movement, we know a vmax of 2.5 is suitable. In practical situations a more careful consideration of vmax is required. If we consider that the spatial range of movement in 3D is approximately 7 x 7 x 3 units a voxel size of 0.2 divides the region into approximately 35 x 35 x 15 = 18k voxels."
+
+#5. Create PPV
+```{r}
+# ppv
+zcol <- s$z
+
+ppvs <- ppv(trajs,zcol = 'z',vmax=v_max,vox= voxelSize_654) #using voxel size from partner script (largest voxel calculated)
+ 
+head(ppvs)  # look at structure of output
+```
+
+#5.1 Calc of Volume
+```{r}
+nonZeroVoxels_s <- length(which(ppvs$p>0)) #determing voxels inside the elipsoid (those with value of 1)
+
+volume_s <- nonZeroVoxels_s * voxelSize_654^3 
+volume_s
+```
+
+The output from the {ppv} function is a dataframe with four columns {x,y,z} are the coordinates of the voxels, and p is binary indicator of whether or not a voxel is in the PPV. This format is also easy to export for use in other software.
+

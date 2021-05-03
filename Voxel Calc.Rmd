@@ -1,0 +1,109 @@
+---
+title: "Voxel Size Calcs"
+author: "Bea Smith"
+date: "4/1/2021"
+output: html_document
+---
+```{r}
+library(tidyverse) #for data manipulation 
+library(dplyr) #for data manipulation 
+```
+
+
+```{r}
+#reading in data
+Total_652 <- read.csv('652_All.csv', stringsAsFactors=FALSE)
+Total_654 <- read.csv('654_All.csv', stringsAsFactors=FALSE)
+Total_658 <- read.csv('658_All.csv', stringsAsFactors=FALSE)
+Total_709 <- read.csv('709_All.csv', stringsAsFactors=FALSE)
+
+Total_709 <- na.omit(Total_709)
+```
+
+#652
+```{r} 
+#From Demsar/Long code
+# Set extent of the volume for all the dives in this dataset to keep resolution consistent
+# Read extent from data 
+
+#Voxel Size 652
+minXcoord <- min(Total_652$x) # westernmost point 
+maxXcoord <- max(Total_652$x) # easternmost point
+minYcoord <- min(Total_652$y) # southernmost point
+maxYcoord <- max(Total_652$y) # northernmost point
+minZcoord <- min(Total_652$z) # lowest point
+maxZcoord <- max(Total_652$z) # highest point
+
+## Set automatic voxel size depending on max distance between points, so that there
+### are 1000 voxels on the side that is longest
+
+distX_652 <- maxXcoord - minXcoord
+distY_652 <- maxYcoord - minYcoord
+distZ_652 <- maxZcoord - minZcoord
+
+
+voxelSize_652 <- max(distX_652,distY_652,distZ_652)/1000
+```
+
+#654
+```{r}
+#Voxel Size 654
+minXcoord <- min(Total_654$x) # westernmost point 
+maxXcoord <- max(Total_654$x) # easternmost point
+minYcoord <- min(Total_654$y) # southernmost point
+maxYcoord <- max(Total_654$y) # northernmost point
+minZcoord <- min(Total_654$z) # lowest point
+maxZcoord <- max(Total_654$z) # highest point
+
+## Set automatic voxel size depending on max distance between points, so that there
+### are 1000 voxels on the side that is longest
+
+distX_654 <- maxXcoord - minXcoord
+distY_654 <- maxYcoord - minYcoord
+distZ_654 <- maxZcoord - minZcoord
+
+
+voxelSize_654 <- max(distX_654,distY_654,distZ_654)/1000
+```
+
+#658
+```{r}
+#Voxel Size 658
+minXcoord <- min(Total_658$x) # westernmost point 
+maxXcoord <- max(Total_658$x) # easternmost point
+minYcoord <- min(Total_658$y) # southernmost point
+maxYcoord <- max(Total_658$y) # northernmost point
+minZcoord <- min(Total_658$z) # lowest point
+maxZcoord <- max(Total_658$z) # highest point
+
+## Set automatic voxel size depending on max distance between points, so that there
+### are 1000 voxels on the side that is longest
+
+distX_658 <- maxXcoord - minXcoord
+distY_658 <- maxYcoord - minYcoord
+distZ_658 <- maxZcoord - minZcoord
+
+
+voxelSize_658 <- max(distX_658,distY_658,distZ_658)/1000
+```
+
+#709
+```{r}
+#Voxel Size 709
+minXcoord <- min(Total_709$x) # westernmost point 
+maxXcoord <- max(Total_709$x) # easternmost point
+minYcoord <- min(Total_709$y) # southernmost point
+maxYcoord <- max(Total_709$y) # northernmost point
+minZcoord <- min(Total_709$z) # lowest point
+maxZcoord <- max(Total_709$z) # highest point
+
+## Set automatic voxel size depending on max distance between points, so that there
+### are 1000 voxels on the side that is longest
+
+distX_709 <- maxXcoord - minXcoord
+distY_709 <- maxYcoord - minYcoord
+distZ_709 <- maxZcoord - minZcoord
+
+
+voxelSize_709 <- max(distX_709,distY_709,distZ_709)/1000
+```
