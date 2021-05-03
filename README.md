@@ -1,2 +1,2 @@
 # Master-s-Project
-Code from PPV calculations and population modeling for master's project
+Code from PPV calculations and species distribution modeling for NSOE master's project
